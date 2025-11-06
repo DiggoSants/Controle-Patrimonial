@@ -4,9 +4,9 @@ $usuario  = "root";
 $senha    = "";
 $banco    = "controle_patrimonio";
 
-$conexao = new mysqli($servidor, $usuario, $senha, $banco);
+$conn = new mysqli($servidor, $usuario, $senha, $banco);
 
-if ($conexao->connect_error) {
-    die("Erro na conexão: " . $conexao->connect_error);
+if ($conn->connect_error) {
+    die("Erro na conexão: " . $conn->connect_error);
 }
 ?>
