@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Login</title>
+  <link rel="stylesheet" href="FORMULARIO.css">
+</head>
+
+<body>
+  <!--esse shell vira um grid (divisao parte esquerda e direita)-->
+  <div class="shell">
+    <!-- pt esquerd -->
+    <aside class="left">
+      <div class="bg" style="background-image:url('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=1600&h=1600&fit=crop');"></div>
+      <div>
+        <div class="brand" style="margin-bottom: 32px;">
+          <div class="logo"><img src="img/edificios.png" width="20" height="20" loading="lazy" alt="predio" /></div>
+          <div>
+            <h1>EMPRESA</h1>
+            <p>Gestão de Ativos</p>
+          </div>
+        </div>
+      </div>
+        <!--basicamente o nome das coisas e as imagens que tema na parte esquerda-->
+      <div>
+        <h2 class="heading">Gerencie seus ativos com eficiência</h2>
+        <p class="subheading">Sistema completo de registro e depreciação de bens patrimoniais para sua empresa.</p>
+
+        <div class="feature">
+          <div class="feature-bullet"> <div class="feature-bullet"><img src="img/grafico-para-baixo_contorno-preto_preenchimento-branco.png" width="20" height="20" loading="lazy" alt="predio" /></div></div>
+          <div>
+            <h3>Depreciação Automática</h3>
+            <p>Cálculo automático de depreciação seguindo normas contábeis vigentes.</p>
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-bullet"> <div class="feature-bullet"><img src="img/edificios_branco.png" width="20" height="20" loading="lazy" alt="predio" /></div></div>
+          <div>
+            <h3>Controle Patrimonial</h3>
+            <p>Registre, acompanhe e gerencie todos os bens da sua empresa.</p>
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-bullet"><img src="img/cadeado_branco.png"  width="20" height="20" loading="lazy" alt="predio" /></div>
+          <div>
+            <h3>Segurança e Conformidade</h3>
+            <p>Dados protegidos com criptografia e backups.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-left">© <span id="yearLeft"></span> AssetPro. Todos os direitos reservados.</div>
+    </aside>
+
+    <!-- pt do login (direita)-->
+    <main class="right"> <!-- pt do card-->
+        <section class="card" aria-labelledby="loginTitle">
+          <header class="card-header">
+            <h2 id="loginTitle" class="card-title">Bem-vindo de volta</h2>
+            <p class="card-desc">Entre com suas credenciais para acessar o sistema</p>
+          </header>
+          <div class="card-content">
+            <form id="loginForm" novalidate> <!-- novalidade desliga a validaçaod o browser-->
+              <div class="field">
+                <label for="email">E-mail</label>
+                <input class="input" id="email" name="email" type="email" placeholder="seu@email.com" autocomplete="email" required />
+                <p id="emailMsg" class="alert error"></p>
+              </div>
+
+              <div class="field">
+                <div class="row row-label">
+                  <label for="password" class="label-inline">Senha</label>
+                  <a href="#" id="forgot">Esqueceu a senha?</a> <!-- Tenho que linkar para levar para recuperar senha-->
+                </div>
+                <input class="input" id="password" name="password" type="password" placeholder="••••••••" autocomplete="current-password" minlength="8" required />
+                <p id="passMsg" class="alert error"></p>
+              </div>
+
+              <div class="row remember-row">
+                <label class="remember-label">
+                  <input id="remember" type="checkbox" class="checkbox" />
+                  Lembrar-me neste dispositivo
+                </label>
+              </div>
+
+              <button id="submitBtn" class="btn" type="submit">Entrar</button>
+
+              <div class="divider" aria-hidden="true">Novo por aqui?</div>
+              <button class="btn btn-outline" id="requestAccess" type="button">Registrar</button>
+
+              <p id="formOk" class="alert ok"></p>
+              <p id="formErr" class="alert error"></p>
+            </form>
+          </div>
+        </section>
+
+        <p class="terms">Ao entrar, você concorda com nossos
+          <a href="#">Termos de Serviço e Política de Privacidade</a>.
+        </p>
+      </div>
+    </main>
+ <!-- Modal de Registro (inicialmente oculto) -->
+<div class="overlay" id="registerOverlay" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="registerTitle">
+    <button class="modal-close" id="registerClose" aria-label="Fechar">×</button>
+    <h3 id="registerTitle">Criar conta</h3>
+    <p class="modal-desc">Preencha seus dados para acessar o sistema.</p>
+
+    <form id="registerForm" novalidate>
+      <label class="sr-only" for="regName">Nome</label>
+      <input id="regName" name="nome" type="text" placeholder="Seu nome completo" required class="input" />
+
+      <label class="sr-only" for="regEmail">E-mail</label>
+      <input id="regEmail" name="email" type="email" placeholder="seu@email.com" required class="input" />
+
+      <label class="sr-only" for="regPass">Senha</label>
+      <input id="regPass" name="senha" type="password" placeholder="Crie uma senha (mín. 8)" minlength="8" required class="input" />
+
+      <label class="sr-only" for="regPass2">Confirmar senha</label>
+      <input id="regPass2" type="password" placeholder="Confirme a senha" minlength="8" required class="input" />
+
+      <button class="btn" type="submit" id="registerSubmit" disabled>Criar conta</button>
+
+      <p id="registerOk" class="alert ok"></p>
+      <p id="registerErr" class="alert error"></p>
+    </form>
+  </div>
+</div>
+
+  <script src="app.js"></script> <!-- controla o login e o regidter-->
+ 
+</body>
+</html>
