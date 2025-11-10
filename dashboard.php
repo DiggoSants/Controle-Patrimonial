@@ -28,25 +28,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['descricao'])) {
 /* =============================
    📉 DAR BAIXA EM UM BEM
    ============================= */
-if (isset($_GET['baixar'])) {
-  $id = (int) $_GET['baixar'];
-  $conn->query("UPDATE bens SET status='baixado' WHERE id_bem=$id");
-  echo "<script>alert('📦 Bem baixado com sucesso!'); window.location='?';</script>";
+/* =============================
+   📦 DAR BAIXA EM UM BEM (com data e motivo)
+   ============================= */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_baixa'])) {
+  $id_bem = (int) $_POST['id_bem_baixa'];
+  $data_baixa = $_POST['data_baixa'];
+  $motivo = $_POST['motivo_baixa'];
+
+  // Atualiza o status do bem
+  $conn->query("UPDATE bens SET status='baixado' WHERE id_bem = $id_bem");
+
+  // Registra a baixa na tabela baixa_bens
+  $stmt = $conn->prepare("INSERT INTO baixa_bens (id_bem, data_baixa, motivo) VALUES (?, ?, ?)");
+  $stmt->execute([$id_bem, $data_baixa, $motivo]);
+
+  echo "<script>alert('📦 Baixa registrada com sucesso!'); window.location='?';</script>";
 }
+
 
 /* =============================
    ✏️ EDITAR UM BEM
    ============================= */
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  if (!empty($_POST['id_bem'])) {
-    // EDITAR
-    $sql = "UPDATE bens SET descricao=?, id_categoria=?, valor_inicial=?, data_aquisicao=?, vida_util=?, valor_atual=? WHERE id_bem=?";
-    $stmt = $conn->prepare($sql);
-    $stmt->execute([$descricao, $id_categoria, $valor_inicial, $data_aquisicao, $vida_util, $valor_inicial, $_POST['id_bem']]);
-  } else {
-    // CADASTRAR NOVO
-    $sql = "INSERT INTO bens (...) VALUES (...)";
-  }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['id_bem'])) {
+  $id_bem = $_POST['id_bem'];
+  $descricao = $_POST['descricao'];
+  $id_categoria = $_POST['id_categoria'];
+  $valor_inicial = $_POST['valor_inicial'];
+  $data_aquisicao = $_POST['data_aquisicao'];
+  $vida_util = $_POST['vida_util'];
+
+  $sql = "UPDATE bens 
+          SET descricao=?, id_categoria=?, valor_inicial=?, data_aquisicao=?, vida_util=?, valor_atual=? 
+          WHERE id_bem=?";
+  $stmt = $conn->prepare($sql);
+  $stmt->execute([$descricao, $id_categoria, $valor_inicial, $data_aquisicao, $vida_util, $valor_inicial, $id_bem]);
 }
 
 /* =============================
@@ -118,35 +134,124 @@ $res_recentes = $conn->query($sql_recentes);
 $sql_bens = "SELECT 
   b.id_bem,
   b.descricao AS nome,
+  c.id_categoria,
   c.nome AS categoria,
   b.valor_inicial,
   b.data_aquisicao,
+  b.vida_util,
   COALESCE(b.valor_atual, 0) AS valor_atual,
   COALESCE(SUM(d.valor_depreciado), (b.valor_inicial - COALESCE(b.valor_atual,0))) AS valor_depreciado,
   b.status
 FROM bens b
 LEFT JOIN categorias c ON b.id_categoria = c.id_categoria
 LEFT JOIN depreciacoes d ON b.id_bem = d.id_bem
-GROUP BY b.id_bem, b.descricao, c.nome, b.valor_inicial, b.data_aquisicao, b.valor_atual, b.status
-ORDER BY status ASC, b.id_bem ASC
-";
+GROUP BY b.id_bem, b.descricao, c.id_categoria, c.nome, b.valor_inicial, b.data_aquisicao, b.valor_atual, b.status, b.vida_util
+ORDER BY status ASC, b.id_bem ASC";
+
 $res_bens = $conn->query($sql_bens);
 
+/* =============================
+   📈 DEPRECIAÇÃO ANUAL
+   ============================= */
 $dep_anual = "SELECT 
-  b.descricao AS nome,
-  c.nome AS categoria,
-  ROUND((1 / b.vida_util) * 100, 2) AS taxa_anual, 
-  ROUND(b.valor_inicial / b.vida_util, 2) AS depreciacao_anual,
-  TIMESTAMPDIFF(YEAR, b.data_aquisicao, CURDATE()) AS anos_decorridos,
-  GREATEST(b.vida_util - TIMESTAMPDIFF(YEAR, b.data_aquisicao, CURDATE()), 0) AS anos_restantes
-FROM bens b
-JOIN categorias c ON b.id_categoria = c.id_categoria
-WHERE b.status = 'ativo'
+    b.id_bem,
+    b.descricao AS nome,
+    c.nome AS categoria,
+    b.data_aquisicao,
+    b.valor_inicial,
+    ROUND((1 / b.vida_util) * 100, 2) AS taxa_anual,
+    ROUND(b.valor_inicial / b.vida_util, 2) AS depreciacao_anual,
+    TIMESTAMPDIFF(YEAR, b.data_aquisicao, CURDATE()) AS anos_decorridos,
+    GREATEST(b.vida_util - TIMESTAMPDIFF(YEAR, b.data_aquisicao, CURDATE()), 0) AS anos_restantes
+  FROM bens b
+  JOIN categorias c ON b.id_categoria = c.id_categoria
+  WHERE b.status = 'ativo'
 ";
 $res_dep_anual = $conn->query($dep_anual);
 $result_dep_anual = $res_dep_anual->fetch_all(MYSQLI_ASSOC);
 $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'));
+
+// quantidade de bens totalmente depreciados
+$totalmente_dep = "SELECT COUNT(*) AS qtd_depreciados FROM bens WHERE valor_atual <= 0 AND status = 'ativo';";
+$res_totalmente_dep = $conn->query($totalmente_dep);
+$totalmente_dep = $res_totalmente_dep->fetch_assoc();
+
+
+$contabil_total = "SELECT SUM(valor_atual) AS valor_contabil_total FROM bens WHERE status = 'ativo'";
+$res_contabil_total = $conn->query($contabil_total);
+$cont_total = $res_contabil_total->fetch_assoc();
+
+// Consulta completa para o Relatório de Novos Bens (últimos 12 meses)
+// Consulta principal: bens adicionados nos últimos 12 meses
+$novos_bens = "SELECT 
+    b.id_bem,
+    b.descricao AS nome,
+    c.nome AS categoria,
+    b.data_aquisicao,
+    b.valor_inicial,
+    b.vida_util
+  FROM bens b
+  JOIN categorias c ON b.id_categoria = c.id_categoria
+  WHERE b.data_aquisicao >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    AND b.status = 'ativo'
+  ORDER BY b.data_aquisicao DESC
+";
+$res_novos_bens = $conn->query($novos_bens);
+$n_bens = $res_novos_bens->fetch_all(MYSQLI_ASSOC); // fetch_all para pegar todos
+
+// Valor total dos novos bens (últimos 12 meses)
+$total_novos_bens = "SELECT SUM(b.valor_inicial) AS valor_total_novos
+  FROM bens b
+  WHERE b.data_aquisicao >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    AND b.status = 'ativo'
+";
+$res_total_novos_bens = $conn->query($total_novos_bens);
+$valorT_novos_bens = $res_total_novos_bens->fetch_assoc();
+
+//Quantidade total de novos bens (últimos 12 meses)
+$qtd_novos_bens = "SELECT COUNT(*) AS qtd_novos
+  FROM bens b
+  WHERE b.data_aquisicao >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    AND b.status = 'ativo'
+";
+$res_qtd_novos_bens = $conn->query($qtd_novos_bens);
+$qtd_novos = $res_qtd_novos_bens->fetch_assoc();
+
+// Consulta de bens baixados com data da tabela baixa_bens
+$baixas_bens = "
+  SELECT 
+    b.id_bem,
+    b.descricao AS nome,
+    c.nome AS categoria,
+    b.data_aquisicao,
+    b.valor_inicial,
+    b.valor_atual,
+    b.vida_util,
+    bb.data_baixa
+  FROM bens b
+  JOIN categorias c ON b.id_categoria = c.id_categoria
+  JOIN baixa_bens bb ON b.id_bem = bb.id_bem
+  WHERE b.status = 'baixado'
+  ORDER BY bb.data_baixa DESC
+";
+$res_baixas_bens = $conn->query($baixas_bens);
+$bens_baixados = $res_baixas_bens ? $res_baixas_bens->fetch_all(MYSQLI_ASSOC) : [];
+
+// Total e quantidade de bens baixados
+$total_baixas = "
+  SELECT 
+    COUNT(*) AS qtd_baixados,
+    SUM(b.valor_inicial) AS valor_total_baixados
+  FROM bens b
+  JOIN baixa_bens bb ON b.id_bem = bb.id_bem
+  WHERE b.status = 'baixado'
+";
+$res_total_baixas = $conn->query($total_baixas);
+$info_baixas = $res_total_baixas ? $res_total_baixas->fetch_assoc() : ['qtd_baixados' => 0, 'valor_total_baixados' => 0];
+
+
 ?>
+
 
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -360,7 +465,10 @@ $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'
       <ul>
         <li data-target="dashboard" class="active">Dashboard</li>
         <li data-target="bens">Bens Patrimoniais</li>
-        <li data-target="relatorios"><img src="public/icon_relatorio.png" alt="">Relatórios</li>
+        <li data-target="relatorios">
+          <!-- <img src="public/icon_relatorio.png" alt=""> -->
+          Relatórios
+        </li>
       </ul>
     </nav>
 
@@ -424,7 +532,7 @@ $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'
 
     <!-- BENS -->
     <section id="bens">
-      <div>
+      <div class="card">
         <table>
           <thead>
             <tr>
@@ -449,12 +557,11 @@ $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'
                 <td>R$ <?= number_format($b['valor_depreciado'], 2, ',', '.') ?></td>
                 <td><?= htmlspecialchars($b['status']) ?></td>
                 <td>
-                  <button class="btn-editar" data-id="<?= $b['id_bem'] ?>"
-                    data-descricao="<?= htmlspecialchars($b['nome']) ?>" data-categoria="<?= $b['categoria'] ?>"
-                    data-valor="<?= $b['valor_inicial'] ?>" data-data="<?= $b['data_aquisicao'] ?>"
-                    data-vida="<?= $b['vida_util'] ?>">
+                  <a class="btn-editar" data-id="<?= $b['id_bem'] ?>" data-descricao="<?= htmlspecialchars($b['nome']) ?>"
+                    data-categoria="<?= $b['categoria'] ?>" data-valor="<?= $b['valor_inicial'] ?>"
+                    data-data="<?= $b['data_aquisicao'] ?>" data-vida="<?= $b['vida_util'] ?>">
                     <img src="public/icon_editar.png" alt="Editar">
-                  </button>
+                  </a>
 
                   <?php if ($b['status'] === 'ativo'): ?>
                     <a href="?baixar=<?= $b['id_bem'] ?>" onclick="return confirm('Dar baixa neste bem?')">
@@ -482,174 +589,270 @@ $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'
           <li data-subtarget="relatorio-vida">Vida Útil</li>
         </ul>
       </nav>
-      <div class="">
-        <div class="subsection active" id="relatorio-depreciacao">
-          <div class="card">
-            <h4>Relatório de Depreciação Anual</h4>
-            <div class="card" style="margin-top:10px; padding:10px;">
-              <span><strong>Total de Depreciação Anual</strong></span><br>
-              <h2>R$ <?= number_format($total_dep_anual, 2, ',', '.') ?></h2>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Bem</th>
-                  <th>Categoria</th>
-                  <th>Taxa Anual (%)</th>
-                  <th>Depreciação Anual</th>
-                  <th>Anos Decorridos</th>
-                  <th>Anos Restantes</th>
-                </tr>
-              </thead>
-              <tbody>
-                <?php if (!empty($result_dep_anual)): ?>
-                  <?php foreach ($result_dep_anual as $result): ?>
-                    <tr>
-                      <td><?= htmlspecialchars($result['nome']) ?></td>
-                      <td><?= htmlspecialchars($result['categoria']) ?></td>
-                      <td><?= number_format($result['taxa_anual'], 2, ',', '.') ?>%</td>
-                      <td>R$ <?= number_format($result['depreciacao_anual'], 2, ',', '.') ?></td>
-                      <td><?= (int) $result['anos_decorridos'] ?> anos</td>
-                      <td><?= (int) $result['anos_restantes'] ?> anos</td>
-                    </tr>
-                  <?php endforeach; ?>
-                <?php else: ?>
-                  <tr>
-                    <td colspan="6">Nenhum bem encontrado.</td>
-                  </tr>
-                <?php endif; ?>
-              </tbody>
-            </table>
+      <div class="subsection active" id="relatorio-depreciacao">
+        <div class="card">
+          <div>Relatório de Depreciação Anual</div>
+          <div class="card" style="margin-top:10px; padding:10px;">
+            <span><strong>Total de Depreciação Anual</strong></span><br>
+            <h2>R$ <?= number_format($total_dep_anual, 2, ',', '.') ?></h2>
           </div>
-        </div>
-
-        <div class="subsection" id="relatorio-categoria">
-          <div class="card">
-            <h3>Relatório por Categoria</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Categoria</th>
-                  <th>Quantidade</th>
-                  <th>Valor Total</th>
-                  <th>Valor Contábil</th>
-                </tr>
-              </thead>
-              <tbody>
-                <?php if ($res_relatorio && $res_relatorio->num_rows > 0): ?>
-                  <?php while ($cat = $res_relatorio->fetch_assoc()): ?>
-                    <tr>
-                      <td><?= htmlspecialchars($cat['categoria']) ?></td>
-                      <td><?= $cat['quantidade'] ?></td>
-                      <td>R$ <?= number_format($cat['valor_total'], 2, ',', '.') ?></td>
-                      <td>R$ <?= number_format($cat['valor_contabil'], 2, ',', '.') ?></td>
-                    </tr>
-                  <?php endwhile; ?>
-                <?php else: ?>
+          <table>
+            <thead>
+              <tr>
+                <th>Bem</th>
+                <th>Categoria</th>
+                <th>Taxa Anual (%)</th>
+                <th>Depreciação Anual</th>
+                <th>Anos Decorridos</th>
+                <th>Anos Restantes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (!empty($result_dep_anual)): ?>
+                <?php foreach ($result_dep_anual as $result): ?>
                   <tr>
-                    <td colspan="4">Nenhuma categoria com bens ativos.</td>
+                    <td><?= htmlspecialchars($result['nome']) ?></td>
+                    <td><?= htmlspecialchars($result['categoria']) ?></td>
+                    <td><?= number_format($result['taxa_anual'] ?? 0, 2, ',', '.') ?>%</td>
+                    <td>R$ <?= number_format($result['depreciacao_anual'] ?? 0, 2, ',', '.') ?></td>
+                    <td><?= number_format($result['anos_decorridos'] ?? 0, 1, '.', '.') ?></td>
+                    <td><?= number_format($result['anos_restantes'] ?? 0, 1, '.', '.') ?></td>
                   </tr>
-                <?php endif; ?>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="subsection" id="relatorio-contabil">
-          <div class="card">
-            <h3>Relatório de Valor Contábil</h3>
-            <table>
-              <thead>
+                <?php endforeach; ?>
+              <?php else: ?>
                 <tr>
-                  <th>Bem</th>
-                  <th>Categoria</th>
-                  <th>Data de Aquisição</th>
-                  <th>Valor de Aquisição</th>
-                  <th>Depreciação Acumulada</th>
-                  <th>Valor Contábil</th>
-                  <th>% Depreciado</th>
+                  <td colspan="6">Nenhum bem encontrado.</td>
                 </tr>
-              </thead>
-              <tbody>
-                <?php if ($res_bens && $res_bens->num_rows > 0): ?>
+              <?php endif; ?>
+            </tbody>
+          </table>
+
+        </div>
+      </div>
+
+      <div class="subsection" id="relatorio-categoria">
+        <div class="card">
+          <div class="card-header">Relatório por Categoria</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Categoria</th>
+                <th>Quantidade</th>
+                <th>Valor Total</th>
+                <th>Depreciação Acumulada</th>
+                <th>Valor Contábil</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if ($res_relatorio && $res_relatorio->num_rows > 0): ?>
+                <?php while ($cat = $res_relatorio->fetch_assoc()): ?>
                   <?php
-                  // Recarrega o resultado porque ele já foi percorrido antes
-                  $res_bens = $conn->query($sql_bens);
-                  while ($b = $res_bens->fetch_assoc()):
-                    $percentual = ($b['valor_inicial'] > 0)
-                      ? (($b['valor_depreciado'] / $b['valor_inicial']) * 100)
-                      : 0;
-                    ?>
-                    <tr>
-                      <td><?= htmlspecialchars($b['nome']) ?></td>
-                      <td><?= htmlspecialchars($b['categoria']) ?></td>
-                      <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
-                      <td>R$ <?= number_format($b['valor_inicial'], 2, ',', '.') ?></td>
-                      <td>R$ <?= number_format($b['valor_depreciado'], 2, ',', '.') ?></td>
-                      <td>R$ <?= number_format($b['valor_atual'], 2, ',', '.') ?></td>
-                      <td><?= number_format($percentual, 2, ',', '.') ?>%</td>
-                    </tr>
-                  <?php endwhile; ?>
-                <?php else: ?>
+                  $depreciacao_acumulada = $cat['valor_total'] - $cat['valor_contabil'];
+                  ?>
                   <tr>
-                    <td colspan="7">Nenhum bem cadastrado.</td>
+                    <td><?= htmlspecialchars($cat['categoria']) ?></td>
+                    <td><?= $cat['quantidade'] ?></td>
+                    <td>R$ <?= number_format($cat['valor_total'], 2, ',', '.') ?></td>
+                    <td>R$ <?= number_format($depreciacao_acumulada, 2, ',', '.') ?></td>
+                    <td>R$ <?= number_format($cat['valor_contabil'], 2, ',', '.') ?></td>
                   </tr>
-                <?php endif; ?>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="subsection" id="relatorio-depreciados">
-          <div class="card">
-            <h4>Relatório de Bens Totalmente Depreciados</h4>
-            <div class="card" style="margin-top:10px; padding:10px;">
-              <span><strong>Total de Depreciação Anual</strong></span><br>
-              <h2>R$ <?= number_format($total_dep_anual, 2, ',', '.') ?></h2>
-            </div>
-            <table>
-              <thead>
+                <?php endwhile; ?>
+              <?php else: ?>
                 <tr>
-                  <th>Bem</th>
-                  <th>Categoria</th>
-                  <th>Taxa Anual (%)</th>
-                  <th>Depreciação Anual</th>
-                  <th>Anos Decorridos</th>
-                  <th>Anos Restantes</th>
+                  <td colspan="5">Nenhuma categoria com bens ativos.</td>
                 </tr>
-              </thead>
-              <tbody>
-                <?php if (!empty($result_dep_anual)): ?>
-                  <?php foreach ($result_dep_anual as $result): ?>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
+      <div class="subsection" id="relatorio-contabil">
+        <div class="card">
+          <div>Relatório de Valor Contábil</div>
+          <div class="card" style="margin-top:10px; padding:10px;">
+            <span><strong>Valor Contábil Total</strong></span><br>
+            <h2>R$ <?= number_format($cont_total['valor_contabil_total'] ?? 0, 2, ',', '.') ?></h2>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Bem</th>
+                <th>Categoria</th>
+                <th>Data de Aquisição</th>
+                <th>Valor de Aquisição</th>
+                <th>Depreciação Acumulada</th>
+                <th>Valor Contábil</th>
+                <th>% Depreciado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if ($res_bens && $res_bens->num_rows > 0): ?>
+                <?php $res_bens = $conn->query($sql_bens);
+                while ($b = $res_bens->fetch_assoc()):
+                  $percentual = ($b['valor_inicial'] > 0) ? (($b['valor_depreciado'] / $b['valor_inicial']) * 100) : 0; ?>
+                  <tr>
+                    <td><?= htmlspecialchars($b['nome']) ?></td>
+                    <td><?= htmlspecialchars($b['categoria']) ?></td>
+                    <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
+                    <td>R$ <?= number_format($b['valor_inicial'], 2, ',', '.') ?></td>
+                    <td>R$ <?= number_format($b['valor_depreciado'], 2, ',', '.') ?></td>
+                    <td>R$ <?= number_format($b['valor_atual'], 2, ',', '.') ?></td>
+                    <td><?= number_format($percentual, 2, ',', '.') ?>%</td>
+                  </tr>
+                <?php endwhile; ?>
+              <?php else: ?>
+                <tr>
+                  <td colspan="7">Nenhum bem cadastrado.</td>
+                </tr>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="subsection" id="relatorio-depreciados">
+        <div class="card">
+          <h4>Relatório de Bens Totalmente Depreciados</h4>
+          <div class="card" style="margin-top:10px; padding:10px;">
+            <span><strong>Total de Bens Depreciados</strong></span><br>
+            <h2><?= $totalmente_dep['qtd_depreciados'] ?? 0 ?></h2>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Bem</th>
+                <th>Categoria</th>
+                <th>Data de Aquisição</th>
+                <th>Valor de Aquisição</th>
+                <th>Depreciação Total</th>
+                <th>Anos em Uso</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (!empty($result_dep_anual)): ?>
+                <?php foreach ($result_dep_anual as $result): ?>
+                  <?php if (($result['anos_restantes'] ?? 0) <= 0): // apenas totalmente depreciados ?>
                     <tr>
                       <td><?= htmlspecialchars($result['nome']) ?></td>
                       <td><?= htmlspecialchars($result['categoria']) ?></td>
-                      <td><?= number_format($result['taxa_anual'], 2, ',', '.') ?>%</td>
-                      <td>R$ <?= number_format($result['depreciacao_anual'], 2, ',', '.') ?></td>
-                      <td><?= (int) $result['anos_decorridos'] ?> anos</td>
-                      <td><?= (int) $result['anos_restantes'] ?> anos</ td>
+                      <td><?= date('d/m/Y', strtotime($result['data_aquisicao'])) ?></td>
+                      <td>R$ <?= number_format($result['valor_inicial'] ?? 0, 2, ',', '.') ?></td>
+                      <td>R$
+                        <?= number_format($result['depreciacao_anual'] * ($result['anos_decorridos'] ?? 0), 2, ',', '.') ?>
+                      </td>
+                      <td><?= number_format(($result['anos_decorridos'] ?? 0), 0, ',', '.') ?> anos</td>
                     </tr>
-                  <?php endforeach; ?>
-                <?php else: ?>
-                  <tr>
-                    <td colspan="6">Nenhum bem encontrado.</td>
-                  </tr>
-                <?php endif; ?>
-              </tbody>
-            </table>
+                  <?php endif; ?>
+                <?php endforeach; ?>
+              <?php else: ?>
+                <tr>
+                  <td colspan="6">Nenhum bem totalmente depreciado encontrado.</td>
+                </tr>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
+      <div class="subsection" id="relatorio-novos">
+        <div class="card">
+          <h4>Relatório de Novos Bens (Últimos 12 meses)</h4>
+
+          <!-- Card resumo -->
+          <div class="card" style="margin-top:10px; padding:10px;">
+            <span><strong>Valor Total de Novos Bens</strong></span><br>
+            <h2>
+              R$ <?= number_format($valorT_novos_bens['valor_total_novos'] ?? 0, 2, ',', '.') ?>
+            </h2>
+            <span><?= ($qtd_novos['qtd_novos'] ?? 0) ?> bens adquiridos</span>
           </div>
+
+          <!-- Tabela -->
+          <table>
+            <thead>
+              <tr>
+                <th>Bem</th>
+                <th>Categoria</th>
+                <th>Data de Aquisição</th>
+                <th>Valor de Aquisição</th>
+                <th>Vida Útil (anos)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (!empty($n_bens)): ?>
+                <?php foreach ($n_bens as $b): ?>
+                  <tr>
+                    <td><?= htmlspecialchars($b['nome']) ?></td>
+                    <td><?= htmlspecialchars($b['categoria']) ?></td>
+                    <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
+                    <td>R$ <?= number_format($b['valor_inicial'], 2, ',', '.') ?></td>
+                    <td><?= number_format($b['vida_util'], '1', '.') ?></td>
+                  </tr>
+                <?php endforeach; ?>
+              <?php else: ?>
+                <tr>
+                  <td colspan="5">Nenhum bem encontrado nos últimos 12 meses.</td>
+                </tr>
+              <?php endif; ?>
+            </tbody>
+          </table>
         </div>
+      </div>
 
-        <div class="subsection" id="relatorio-novos">
+      <div class="subsection" id="relatorio-baixas">
+        <div class="card">
+          <h4>Relatório de Bens Baixados</h4>
 
+          <!-- Card resumo -->
+          <div class="card" style="margin-top:10px; padding:10px;">
+            <span><strong>Valor Total de Bens Baixados</strong></span><br>
+            <h2>R$ <?= number_format($info_baixas['valor_total_baixados'] ?? 0, 2, ',', '.') ?></h2>
+            <span><?= ($info_baixas['qtd_baixados'] ?? 0) ?> bens baixados</span>
+          </div>
+
+          <!-- Tabela -->
+          <table>
+            <thead>
+              <tr>
+                <th>Bem</th>
+                <th>Categoria</th>
+                <th>Data de Aquisição</th>
+                <th>Data de Baixa</th>
+                <th>Valor de Aquisição</th>
+                <th>Valor Contábil</th>
+
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (!empty($bens_baixados)): ?>
+                <?php foreach ($bens_baixados as $b): ?>
+                  <tr>
+                    <td><?= htmlspecialchars($b['nome']) ?></td>
+                    <td><?= htmlspecialchars($b['categoria']) ?></td>
+                    <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
+                    <td><?= date('d/m/Y', strtotime($b['data_baixa'])) ?></td>
+                    <td>R$ <?= number_format($b['valor_inicial'], 2, ',', '.') ?></td>
+                    <td>R$ <?= number_format($b['valor_atual'], 2, ',', '.') ?></td>
+
+                  </tr>
+                <?php endforeach; ?>
+              <?php else: ?>
+                <tr>
+                  <td colspan="6">Nenhum bem baixado encontrado.</td>
+                </tr>
+              <?php endif; ?>
+            </tbody>
+          </table>
         </div>
+      </div>
 
-        <div class="subsection" id="relatorio-baixas">
-        </div>
 
-        <div class="subsection" id="relatorio-vida_util">
-        </div>
-
+      <div class="subsection" id="relatorio-vida_util">
+        
       </div>
     </section>
   </main>
@@ -726,6 +929,29 @@ $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'
     </div>
   </div>
 
+  <!-- MODAL BAIXA DE BEM -->
+  <div id="modal-baixa-bem" class="modal">
+    <div class="modal-content">
+      <h3>Baixar Bem Patrimonial</h3>
+      <p>Informe a data e o motivo da baixa do bem: <strong id="bem-nome-baixa"></strong></p>
+      <form id="form-baixa-bem" method="POST" action="?">
+        <input type="hidden" name="id_bem_baixa">
+
+        <label>Data da Baixa:</label>
+        <input type="date" name="data_baixa" required>
+
+        <label>Motivo da Baixa:</label>
+        <textarea name="motivo_baixa" rows="3" required></textarea>
+
+        <div class="modal-actions">
+          <button type="submit" name="confirmar_baixa">Confirmar</button>
+          <button type="button" id="fechar-baixa">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
 
   <script>
     const menuItens = document.querySelectorAll('nav ul li[data-target]');
@@ -779,6 +1005,31 @@ $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'
     modalEditar.addEventListener('click', e => {
       if (e.target === modalEditar) modalEditar.style.display = 'none';
     });
+
+    // 🔹 Modal de Baixa
+    const modalBaixa = document.getElementById('modal-baixa-bem');
+    const formBaixa = document.getElementById('form-baixa-bem');
+    const btnFecharBaixa = document.getElementById('fechar-baixa');
+    const bemNomeBaixa = document.getElementById('bem-nome-baixa');
+
+    // Botões de baixa (ícone do lixo)
+    document.querySelectorAll('a[href*="?baixar="]').forEach(link => {
+      link.addEventListener('click', e => {
+        e.preventDefault(); // impede a navegação direta
+        const id = link.href.split('=')[1];
+        const nome = link.closest('tr').querySelector('td:first-child').textContent;
+
+        formBaixa.id_bem_baixa.value = id;
+        bemNomeBaixa.textContent = nome;
+        modalBaixa.style.display = 'flex';
+      });
+    });
+
+    btnFecharBaixa.addEventListener('click', () => modalBaixa.style.display = 'none');
+    modalBaixa.addEventListener('click', e => {
+      if (e.target === modalBaixa) modalBaixa.style.display = 'none';
+    });
+
   </script>
 
 </body>
