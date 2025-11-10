@@ -53,9 +53,9 @@ form.addEventListener('submit', async (e) => {
 
     show(formOk, 'Login realizado com sucesso!');
     const params = new URLSearchParams(location.search);
-    const next = params.get('next') || '../dashboard.php';
+    const next = params.get('next') || '../dashboard.php'; // preciso ajeitar isso
     window.location.href = next;
-
+ 
 
   } catch (err) {
     show(formErr, err.message || 'Erro inesperado.');

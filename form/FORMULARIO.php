@@ -27,6 +27,7 @@ if ($acao === 'register') {
         echo json_encode(["ok" => false, "message" => "Preencha todos os campos."]);
         exit;
     }
+
     // verifica se já existe e-mail
     $check = $conexao->prepare("SELECT id_usuario FROM usuarios WHERE email = ?");
     $check->bind_param("s", $email);
