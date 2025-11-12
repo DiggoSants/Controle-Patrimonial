@@ -18,7 +18,7 @@ $acao = $_GET['action'] ?? null;
 
 // ========== CADASTRO ==========
 if ($acao === 'register') {
-    $nome  = $dados['nome']  ?? '';
+    $nome = $dados['nome'] ?? '';
     $email = $dados['email'] ?? '';
     $senha = $dados['senha'] ?? '';
 
@@ -71,6 +71,8 @@ $result = $stmt->get_result();
 if ($result && $result->num_rows === 1) {
     $row = $result->fetch_assoc();
     if (password_verify($senha, $row['senha'])) {
+        session_start(); // Inicia a sessão
+        $_SESSION['usuario_nome'] = $email; // Armazena o login do usuário (pode usar nome, se quiser)
         echo json_encode(["ok" => true, "message" => "Login bem-sucedido!"]);
     } else {
         http_response_code(401);

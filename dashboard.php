@@ -1,20 +1,20 @@
 <?php
 require_once '../Controle-Patrimonial/config/conexao.php';
 require_once 'vendor/autoload.php';
-
-// EXPORTAR PDF
+session_start();
 use Dompdf\Dompdf;
 
+/* =============================
+   📄 EXPORTAR PDF
+   ============================= */
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
   ob_start();
-
   echo "<h1 style='text-align:center;'>Relatório Completo de Bens Patrimoniais</h1>";
   echo "<p style='text-align:center;'>Gerado em " . date('d/m/Y H:i') . "</p><hr>";
 
-  // Dados básicos
-  $dados = $conn->query("SELECT COUNT(*) AS total_bens, SUM(valor_inicial) AS valor_total FROM bens")->fetch_assoc();
-  $ativos = $conn->query("SELECT COUNT(*) AS ativos FROM bens WHERE status='ativo'")->fetch_assoc();
-  $baixados = $conn->query("SELECT COUNT(*) AS baixados FROM bens WHERE status='baixado'")->fetch_assoc();
+  $dados = $conexao->query("SELECT COUNT(*) AS total_bens, SUM(valor_inicial) AS valor_total FROM bens")->fetch_assoc();
+  $ativos = $conexao->query("SELECT COUNT(*) AS ativos FROM bens WHERE status='ativo'")->fetch_assoc();
+  $baixados = $conexao->query("SELECT COUNT(*) AS baixados FROM bens WHERE status='baixado'")->fetch_assoc();
 
   echo "<h2>Resumo Geral</h2>";
   echo "<p><strong>Total de bens:</strong> {$dados['total_bens']}<br>";
@@ -23,7 +23,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
   echo "<strong>Baixados:</strong> {$baixados['baixados']}</p>";
 
   echo "<h2>Bens Ativos</h2>";
-  $bens = $conn->query("SELECT b.descricao, c.nome AS categoria, b.data_aquisicao, b.valor_inicial, b.valor_atual, b.status
+  $bens = $conexao->query("SELECT b.descricao, c.nome AS categoria, b.data_aquisicao, b.valor_inicial, b.valor_atual, b.status
     FROM bens b JOIN categorias c ON b.id_categoria=c.id_categoria ORDER BY b.id_bem ASC");
   echo "<table border='1' cellspacing='0' cellpadding='5' width='100%'>
     <tr><th>Descrição</th><th>Categoria</th><th>Data de Aquisição</th><th>Valor Inicial</th><th>Valor Atual</th><th>Status</th></tr>";
@@ -40,7 +40,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
   echo "</table>";
 
   echo "<h2>Bens Baixados</h2>";
-  $baixas = $conn->query("SELECT b.descricao, c.nome AS categoria, bb.data_baixa, bb.motivo 
+  $baixas = $conexao->query("SELECT b.descricao, c.nome AS categoria, bb.data_baixa, bb.motivo 
     FROM baixa_bens bb JOIN bens b ON bb.id_bem=b.id_bem 
     JOIN categorias c ON b.id_categoria=c.id_categoria ORDER BY bb.data_baixa DESC");
   echo "<table border='1' cellspacing='0' cellpadding='5' width='100%'>
@@ -55,25 +55,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
   }
   echo "</table>";
 
-  echo "<h2>Bens com Vida Útil Inferior a 1 Ano</h2>";
-  $vida = $conn->query("SELECT b.descricao, c.nome AS categoria, b.data_aquisicao,
-    GREATEST(0, b.vida_util * 12 - TIMESTAMPDIFF(MONTH, b.data_aquisicao, CURDATE())) AS meses_restantes
-    FROM bens b JOIN categorias c ON b.id_categoria=c.id_categoria
-    WHERE b.status='ativo' AND (b.vida_util * 12 - TIMESTAMPDIFF(MONTH, b.data_aquisicao, CURDATE())) < 12");
-  echo "<table border='1' cellspacing='0' cellpadding='5' width='100%'>
-    <tr><th>Bem</th><th>Categoria</th><th>Data de Aquisição</th><th>Meses Restantes</th></tr>";
-  while ($v = $vida->fetch_assoc()) {
-    echo "<tr>
-      <td>{$v['descricao']}</td>
-      <td>{$v['categoria']}</td>
-      <td>" . date('d/m/Y', strtotime($v['data_aquisicao'])) . "</td>
-      <td>{$v['meses_restantes']}</td>
-    </tr>";
-  }
-  echo "</table>";
-
   $html = ob_get_clean();
-
   $dompdf = new Dompdf();
   $dompdf->loadHtml($html);
   $dompdf->setPaper('A4', 'portrait');
@@ -83,49 +65,59 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
 }
 
 /* =============================
-   🆕 CADASTRO DE NOVO BEM
+   🆕 CADASTRO / ✏️ EDIÇÃO DE BEM
    ============================= */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['descricao'])) {
-  $descricao = $_POST['descricao'];
-  $id_categoria = $_POST['id_categoria'];
-  $valor_inicial = $_POST['valor_inicial'];
-  $data_aquisicao = $_POST['data_aquisicao'];
-  $vida_util = $_POST['vida_util'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+  $acao = $_POST['acao'] ?? '';
+  $descricao = $_POST['descricao'] ?? '';
+  $id_categoria = $_POST['id_categoria'] ?? null;
+  $valor_inicial = $_POST['valor_inicial'] ?? 0;
+  $data_aquisicao = $_POST['data_aquisicao'] ?? '';
+  $vida_util = $_POST['vida_util'] ?? 0;
 
-  $valor_atual = $valor_inicial;
-  $status = 'ativo';
+  // NOVO BEM
+  if ($acao === 'novo' && empty($_POST['id_bem'])) {
+    $valor_atual = $valor_inicial;
+    $status = 'ativo';
+    $sql_insert = "INSERT INTO bens (descricao, id_categoria, valor_inicial, valor_atual, data_aquisicao, vida_util, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)";
+    $stmt = $conexao->prepare($sql_insert);
+    if ($stmt->execute([$descricao, $id_categoria, $valor_inicial, $valor_atual, $data_aquisicao, $vida_util, $status])) {
+      echo "<script>alert('✅ Bem cadastrado com sucesso!'); window.location='?';</script>";
+      exit;
+    } else {
+      echo "<script>alert('❌ Erro ao cadastrar o bem!');</script>";
+    }
+  }
 
-  $sql_insert = "INSERT INTO bens (descricao, id_categoria, valor_inicial, valor_atual, data_aquisicao, vida_util, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)";
-  $stmt = $conn->prepare($sql_insert);
+  // EDITAR BEM
+  if ($acao === 'editar' && !empty($_POST['id_bem'])) {
+    $id_bem = $_POST['id_bem'];
+    $sql_update = "UPDATE bens 
+                   SET descricao=?, id_categoria=?, valor_inicial=?, data_aquisicao=?, vida_util=?, valor_atual=? 
+                   WHERE id_bem=?";
+    $stmt = $conexao->prepare($sql_update);
+    if ($stmt->execute([$descricao, $id_categoria, $valor_inicial, $data_aquisicao, $vida_util, $valor_inicial, $id_bem])) {
+      echo "<script>alert('✏️ Bem atualizado com sucesso!'); window.location='?';</script>";
+      exit;
+    } else {
+      echo "<script>alert('❌ Erro ao atualizar o bem!');</script>";
+    }
+  }
 
-  if ($stmt->execute([$descricao, $id_categoria, $valor_inicial, $valor_atual, $data_aquisicao, $vida_util, $status])) {
-    echo "<script>alert('✅ Bem cadastrado com sucesso!'); window.location='?';</script>";
-  } else {
-    echo "<script>alert('❌ Erro ao cadastrar o bem!');</script>";
+  // DAR BAIXA EM UM BEM
+  if (isset($_POST['confirmar_baixa'])) {
+    $id_bem = (int)$_POST['id_bem_baixa'];
+    $data_baixa = $_POST['data_baixa'];
+    $motivo = $_POST['motivo_baixa'];
+    $conexao->query("UPDATE bens SET status='baixado' WHERE id_bem=$id_bem");
+    $stmt = $conexao->prepare("INSERT INTO baixa_bens (id_bem, data_baixa, motivo) VALUES (?, ?, ?)");
+    $stmt->execute([$id_bem, $data_baixa, $motivo]);
+    echo "<script>alert('📦 Baixa registrada com sucesso!'); window.location='?';</script>";
+    exit;
   }
 }
 
-/* =============================
-   📉 DAR BAIXA EM UM BEM
-   ============================= */
-/* =============================
-   📦 DAR BAIXA EM UM BEM (com data e motivo)
-   ============================= */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_baixa'])) {
-  $id_bem = (int) $_POST['id_bem_baixa'];
-  $data_baixa = $_POST['data_baixa'];
-  $motivo = $_POST['motivo_baixa'];
-
-  // Atualiza o status do bem
-  $conn->query("UPDATE bens SET status='baixado' WHERE id_bem = $id_bem");
-
-  // Registra a baixa na tabela baixa_bens
-  $stmt = $conn->prepare("INSERT INTO baixa_bens (id_bem, data_baixa, motivo) VALUES (?, ?, ?)");
-  $stmt->execute([$id_bem, $data_baixa, $motivo]);
-
-  echo "<script>alert('📦 Baixa registrada com sucesso!'); window.location='?';</script>";
-}
 
 
 /* =============================
@@ -142,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['id_bem'])) {
   $sql = "UPDATE bens 
           SET descricao=?, id_categoria=?, valor_inicial=?, data_aquisicao=?, vida_util=?, valor_atual=? 
           WHERE id_bem=?";
-  $stmt = $conn->prepare($sql);
+  $stmt = $conexao->prepare($sql);
   $stmt->execute([$descricao, $id_categoria, $valor_inicial, $data_aquisicao, $vida_util, $valor_inicial, $id_bem]);
 }
 
@@ -150,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['id_bem'])) {
    📊 CONSULTAS PRINCIPAIS DO DASHBOARD
    ============================= */
 $sql_total = "SELECT SUM(valor_inicial) AS total_bens, COUNT(*) AS qtd_bens FROM bens";
-$res_total = $conn->query($sql_total);
+$res_total = $conexao->query($sql_total);
 $total = $res_total->fetch_assoc();
 
 $sql_contabil = "
@@ -160,7 +152,7 @@ $sql_contabil = "
   FROM bens 
   WHERE status = 'ativo'
 ";
-$res_contabil = $conn->query($sql_contabil);
+$res_contabil = $conexao->query($sql_contabil);
 $contabil = $res_contabil->fetch_assoc();
 
 $sql_dep = "SELECT 
@@ -168,7 +160,7 @@ $sql_dep = "SELECT
   FROM bens b
   WHERE b.status = 'ativo'
 ";
-$res_dep = $conn->query($sql_dep);
+$res_dep = $conexao->query($sql_dep);
 $dep = $res_dep->fetch_assoc();
 
 $sql_depreciados = "
@@ -176,11 +168,11 @@ $sql_depreciados = "
   FROM bens 
   WHERE valor_atual = 0 AND status = 'ativo'
 ";
-$res_depreciados = $conn->query($sql_depreciados);
+$res_depreciados = $conexao->query($sql_depreciados);
 $depreciados = $res_depreciados->fetch_assoc();
 
 $sql_baixados = "SELECT COUNT(*) AS qtd_baixados FROM bens WHERE status = 'baixado'";
-$res_baixados = $conn->query($sql_baixados);
+$res_baixados = $conexao->query($sql_baixados);
 $baixados = $res_baixados->fetch_assoc();
 
 $sql_relatorio = "SELECT 
@@ -194,7 +186,7 @@ $sql_relatorio = "SELECT
   GROUP BY c.nome
   ORDER BY quantidade DESC
 ";
-$res_relatorio = $conn->query($sql_relatorio);
+$res_relatorio = $conexao->query($sql_relatorio);
 
 $sql_recentes = "SELECT 
     b.descricao, 
@@ -207,7 +199,7 @@ $sql_recentes = "SELECT
   WHERE b.data_aquisicao >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
   ORDER BY b.data_aquisicao DESC
 ";
-$res_recentes = $conn->query($sql_recentes);
+$res_recentes = $conexao->query($sql_recentes);
 
 /* =============================
    ⚙️ CONSULTAS SECUNDÁRIAS
@@ -229,7 +221,7 @@ LEFT JOIN depreciacoes d ON b.id_bem = d.id_bem
 GROUP BY b.id_bem, b.descricao, c.id_categoria, c.nome, b.valor_inicial, b.data_aquisicao, b.valor_atual, b.status, b.vida_util
 ORDER BY status ASC, b.id_bem ASC";
 
-$res_bens = $conn->query($sql_bens);
+$res_bens = $conexao->query($sql_bens);
 
 /* =============================
    📈 DEPRECIAÇÃO ANUAL
@@ -248,18 +240,18 @@ $dep_anual = "SELECT
   JOIN categorias c ON b.id_categoria = c.id_categoria
   WHERE b.status = 'ativo'
 ";
-$res_dep_anual = $conn->query($dep_anual);
+$res_dep_anual = $conexao->query($dep_anual);
 $result_dep_anual = $res_dep_anual->fetch_all(MYSQLI_ASSOC);
 $total_dep_anual = array_sum(array_column($result_dep_anual, 'depreciacao_anual'));
 
 // quantidade de bens totalmente depreciados
 $totalmente_dep = "SELECT COUNT(*) AS qtd_depreciados FROM bens WHERE valor_atual <= 0 AND status = 'ativo';";
-$res_totalmente_dep = $conn->query($totalmente_dep);
+$res_totalmente_dep = $conexao->query($totalmente_dep);
 $totalmente_dep = $res_totalmente_dep->fetch_assoc();
 
 
 $contabil_total = "SELECT SUM(valor_atual) AS valor_contabil_total FROM bens WHERE status = 'ativo'";
-$res_contabil_total = $conn->query($contabil_total);
+$res_contabil_total = $conexao->query($contabil_total);
 $cont_total = $res_contabil_total->fetch_assoc();
 
 // Consulta completa para o Relatório de Novos Bens (últimos 12 meses)
@@ -277,7 +269,7 @@ $novos_bens = "SELECT
     AND b.status = 'ativo'
   ORDER BY b.data_aquisicao DESC
 ";
-$res_novos_bens = $conn->query($novos_bens);
+$res_novos_bens = $conexao->query($novos_bens);
 $n_bens = $res_novos_bens->fetch_all(MYSQLI_ASSOC); // fetch_all para pegar todos
 
 // Valor total dos novos bens (últimos 12 meses)
@@ -286,7 +278,7 @@ $total_novos_bens = "SELECT SUM(b.valor_inicial) AS valor_total_novos
   WHERE b.data_aquisicao >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
     AND b.status = 'ativo'
 ";
-$res_total_novos_bens = $conn->query($total_novos_bens);
+$res_total_novos_bens = $conexao->query($total_novos_bens);
 $valorT_novos_bens = $res_total_novos_bens->fetch_assoc();
 
 //Quantidade total de novos bens (últimos 12 meses)
@@ -295,7 +287,7 @@ $qtd_novos_bens = "SELECT COUNT(*) AS qtd_novos
   WHERE b.data_aquisicao >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
     AND b.status = 'ativo'
 ";
-$res_qtd_novos_bens = $conn->query($qtd_novos_bens);
+$res_qtd_novos_bens = $conexao->query($qtd_novos_bens);
 $qtd_novos = $res_qtd_novos_bens->fetch_assoc();
 
 // Consulta de bens baixados com data da tabela baixa_bens
@@ -315,7 +307,7 @@ $baixas_bens = "
   WHERE b.status = 'baixado'
   ORDER BY bb.data_baixa DESC
 ";
-$res_baixas_bens = $conn->query($baixas_bens);
+$res_baixas_bens = $conexao->query($baixas_bens);
 $bens_baixados = $res_baixas_bens ? $res_baixas_bens->fetch_all(MYSQLI_ASSOC) : [];
 
 // Total e quantidade de bens baixados
@@ -327,7 +319,7 @@ $total_baixas = "
   JOIN baixa_bens bb ON b.id_bem = bb.id_bem
   WHERE b.status = 'baixado'
 ";
-$res_total_baixas = $conn->query($total_baixas);
+$res_total_baixas = $conexao->query($total_baixas);
 $info_baixas = $res_total_baixas ? $res_total_baixas->fetch_assoc() : ['qtd_baixados' => 0, 'valor_total_baixados' => 0];
 
 
@@ -347,7 +339,7 @@ $sql_bens_finais = "
   ORDER BY meses_restantes ASC
 ";
 
-$res_bens_finais = $conn->query($sql_bens_finais);
+$res_bens_finais = $conexao->query($sql_bens_finais);
 $result_bens_finais = $res_bens_finais->fetch_all(MYSQLI_ASSOC);
 
 $sql_qtd_bens_finais = "
@@ -356,11 +348,43 @@ $sql_qtd_bens_finais = "
   WHERE status = 'ativo'
     AND (vida_util * 12 - TIMESTAMPDIFF(MONTH, data_aquisicao, CURDATE())) < 12
 ";
-$res_qtd_bens_finais = $conn->query($sql_qtd_bens_finais);
+$res_qtd_bens_finais = $conexao->query($sql_qtd_bens_finais);
 $bens_finais = $res_qtd_bens_finais->fetch_assoc();
 
-?>
+// Consulta de bens baixados com motivo da tabela baixa_bens
+$baixas_bens = "
+  SELECT 
+    b.id_bem,
+    b.descricao AS nome,
+    c.nome AS categoria,
+    b.data_aquisicao,
+    b.valor_inicial,
+    b.valor_atual,
+    b.vida_util,
+    bb.data_baixa,
+    bb.motivo
+  FROM bens b
+  JOIN categorias c ON b.id_categoria = c.id_categoria
+  JOIN baixa_bens bb ON b.id_bem = bb.id_bem
+  WHERE b.status = 'baixado'
+  ORDER BY bb.data_baixa DESC
+";
+$res_baixas_bens = $conexao->query($baixas_bens);
+$bens_baixados = $res_baixas_bens ? $res_baixas_bens->fetch_all(MYSQLI_ASSOC) : [];
 
+// Total e quantidade de bens baixados
+$total_baixas = "
+  SELECT 
+    COUNT(*) AS qtd_baixados,
+    SUM(b.valor_inicial) AS valor_total_baixados
+  FROM bens b
+  JOIN baixa_bens bb ON b.id_bem = bb.id_bem
+  WHERE b.status = 'baixado'
+";
+$res_total_baixas = $conexao->query($total_baixas);
+$info_baixas = $res_total_baixas ? $res_total_baixas->fetch_assoc() : ['qtd_baixados' => 0, 'valor_total_baixados' => 0];
+
+?>
 
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -370,206 +394,41 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Controle Patrimonial</title>
   <link rel="stylesheet" href="style.css">
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #f5f5f5;
-    }
-
-    nav ul {
-      display: flex;
-      list-style: none;
-      gap: 20px;
-      margin: 0;
-      padding: 0;
-    }
-
-    nav li {
-      cursor: pointer;
-      padding: 8px 14px;
-      border-radius: 4px;
-    }
-
-    nav li:hover,
-    nav li.active {
-      background: #34495e;
-      color: white;
-    }
-
-    main {
-      padding: 30px;
-    }
-
-    section {
-      display: none;
-    }
-
-    section.active {
-      display: block;
-    }
-
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 20px;
-    }
-
-    .card {
-      background: white;
-      border-radius: 10px;
-      padding: 20px;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-    }
-
-    .card h3,
-    .card h4 {
-      margin: 0;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-    }
-
-    th,
-    td {
-      border-bottom: 1px solid #ddd;
-      padding: 10px;
-      text-align: left;
-    }
-
-    .sub-menu ul {
-      display: flex;
-      gap: 15px;
-      list-style: none;
-      padding: 0;
-      margin: 15px 0;
-    }
-
-    .sub-menu li {
-      padding: 6px 12px;
-      border-radius: 4px;
-      background: #e0e0e0;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-
-    .sub-menu li:hover {
-      background: #34495e;
-      color: white;
-    }
-
-    .sub-menu li.active {
-      background: #34495e;
-      color: white;
-    }
-
-    .subsection {
-      display: none;
-      margin-top: 20px;
-    }
-
-    .subsection.active {
-      display: block;
-    }
-
-    .modal {
-      display: none;
-      position: fixed;
-      z-index: 1000;
-      left: 0;
-      top: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.6);
-      justify-content: center;
-      align-items: center;
-    }
-
-    .modal-content {
-      background: #fff;
-      padding: 25px;
-      border-radius: 10px;
-      width: 400px;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-      text-align: left;
-      animation: fadeIn 0.2s ease;
-    }
-
-    .modal-content h3 {
-      text-align: center;
-      margin-top: 0;
-    }
-
-    .modal-content label {
-      display: block;
-      margin-top: 10px;
-      font-weight: bold;
-    }
-
-    .modal-content input,
-    .modal-content select {
-      width: 100%;
-      padding: 8px;
-      margin-top: 4px;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-    }
-
-    .modal-actions {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 20px;
-    }
-
-    .modal-actions button {
-      padding: 8px 14px;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-
-    .modal-actions button[type="submit"] {
-      background: #2ecc71;
-      color: white;
-    }
-
-    .modal-actions button#fechar-modal {
-      background: #e74c3c;
-      color: white;
-    }
-
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: scale(0.9);
-      }
-
-      to {
-        opacity: 1;
-        transform: scale(1);
-      }
-    }
-
-    img {
-      width: 20px;
-      height: 20px;
-    }
-  </style>
 </head>
 
 <body>
   <header>
-    <div class="card-header">
+    <div>
       <h1>Controle Patrimonial</h1>
       <p>Registro de bens e controle de depreciação</p>
-      <button onclick="window.location='?exportar=pdf'">📄 Exportar Relatório Completo</button>
-      <button id="abrir-modal">Novo bem</button>
+    </div>
+    <div>
+      <button class="btn btn-outline" onclick="window.location='?exportar=pdf'">📄 Exportar Relatório Completo</button>
+      <button class="btn btn-primary" id="abrir-modal">+ Novo bem</button>
+      <button class="btn btn-danger"
+        onclick="if(confirm('Deseja realmente sair da conta?')) window.location='logout.php';">
+        SAIR
+      </button>
+    </div>
+
+    </div>
+
+    <?php
+    // Verifica se o usuário está logado
+    if (!isset($_SESSION['usuario_nome'])) {
+      header('Location: ../Controle-Patrimonial/form/FORMULARIO.html');
+      exit;
+    }
+
+    // Extrai primeiro nome do email
+    $nomeCompleto = $_SESSION['usuario_nome'];
+    $partes = explode('@', trim($nomeCompleto));
+    $primeiro = $partes[0];
+    $usuarioExibido = $primeiro;
+    ?>
+
     </div>
   </header>
-
 
   <main>
     <nav>
@@ -610,36 +469,38 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
 
       <div class="card">
         <h3>Relatório de novos bens (Últimos 6 meses)</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Nome</th>
-              <th>Categoria</th>
-              <th>Data de Aquisição</th>
-              <th>Valor de Aquisição</th>
-              <th>Vida Útil</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php if ($res_recentes && $res_recentes->num_rows > 0): ?>
-              <?php while ($bem = $res_recentes->fetch_assoc()): ?>
-                <tr>
-                  <td><?= htmlspecialchars($bem['descricao']) ?></td>
-                  <td><?= htmlspecialchars($bem['categoria']) ?></td>
-                  <td><?= htmlspecialchars(date('d/m/Y', strtotime($bem['data_aquisicao']))) ?></td>
-                  <td>R$ <?= number_format($bem['valor_inicial'], 2, ',', '.') ?></td>
-                  <td><?= htmlspecialchars($bem['vida_util']) ?> anos</td>
-                </tr>
-              <?php endwhile; ?>
-            <?php else: ?>
+        <div class="scroll-box">
+          <table>
+            <thead>
               <tr>
-                <td colspan="5">Nenhum bem cadastrado nos últimos 6 meses.</td>
+                <th>Nome</th>
+                <th>Categoria</th>
+                <th>Data de Aquisição</th>
+                <th>Valor de Aquisição</th>
+                <th>Vida Útil</th>
               </tr>
-            <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              <?php if ($res_recentes && $res_recentes->num_rows > 0): ?>
+                <?php while ($bem = $res_recentes->fetch_assoc()): ?>
+                  <tr>
+                    <td><?= htmlspecialchars($bem['descricao']) ?></td>
+                    <td><?= htmlspecialchars($bem['categoria']) ?></td>
+                    <td><?= htmlspecialchars(date('d/m/Y', strtotime($bem['data_aquisicao']))) ?></td>
+                    <td>R$ <?= number_format($bem['valor_inicial'], 2, ',', '.') ?></td>
+                    <td><?= htmlspecialchars($bem['vida_util']) ?> anos</td>
+                  </tr>
+                <?php endwhile; ?>
+              <?php else: ?>
+                <tr>
+                  <td colspan="5">Nenhum bem cadastrado nos últimos 6 meses.</td>
+                </tr>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
     </section>
+    </div>
 
     <!-- BENS -->
     <section id="bens">
@@ -658,34 +519,41 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
             </tr>
           </thead>
           <tbody>
-            <?php while ($b = $res_bens->fetch_assoc()): ?>
-              <tr>
-                <td><?= htmlspecialchars($b['nome']) ?></td>
-                <td><?= htmlspecialchars($b['categoria']) ?></td>
-                <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
-                <td>R$ <?= number_format($b['valor_inicial'], 2, ',', '.') ?></td>
-                <td>R$ <?= number_format($b['valor_atual'], 2, ',', '.') ?></td>
-                <td>R$ <?= number_format($b['valor_depreciado'], 2, ',', '.') ?></td>
-                <td><?= htmlspecialchars($b['status']) ?></td>
-                <td>
-                  <a class="btn-editar" data-id="<?= $b['id_bem'] ?>" data-descricao="<?= htmlspecialchars($b['nome']) ?>"
-                    data-categoria="<?= $b['categoria'] ?>" data-valor="<?= $b['valor_inicial'] ?>"
-                    data-data="<?= $b['data_aquisicao'] ?>" data-vida="<?= $b['vida_util'] ?>">
-                    <img src="public/icon_editar.png" alt="Editar">
-                  </a>
-
-                  <?php if ($b['status'] === 'ativo'): ?>
-                    <a href="?baixar=<?= $b['id_bem'] ?>" onclick="return confirm('Dar baixa neste bem?')">
-                      <img src="public/icon_deletar.png" alt="Dar baixa">
+            <?php if ($res_bens && $res_bens->num_rows > 0): ?>
+              <?php while ($b = $res_bens->fetch_assoc()): ?>
+                <tr>
+                  <td><?= htmlspecialchars($b['nome']) ?></td>
+                  <td><?= htmlspecialchars($b['categoria']) ?></td>
+                  <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
+                  <td>R$ <?= number_format($b['valor_inicial'], 2, ',', '.') ?></td>
+                  <td>R$ <?= number_format($b['valor_atual'], 2, ',', '.') ?></td>
+                  <td>R$ <?= number_format($b['valor_depreciado'], 2, ',', '.') ?></td>
+                  <td><?= htmlspecialchars($b['status']) ?></td>
+                  <td>
+                    <a class="btn-editar" data-id="<?= $b['id_bem'] ?>" data-descricao="<?= htmlspecialchars($b['nome']) ?>"
+                      data-categoria="<?= $b['categoria'] ?>" data-valor="<?= $b['valor_inicial'] ?>"
+                      data-data="<?= $b['data_aquisicao'] ?>" data-vida="<?= $b['vida_util'] ?>">
+                      <img src="public/icon_editar.png" alt="Editar">
                     </a>
-                  <?php endif; ?>
-                </td>
+
+                    <?php if ($b['status'] === 'ativo'): ?>
+                      <a href="?baixar=<?= $b['id_bem'] ?>" onclick="return confirm('Dar baixa neste bem?')">
+                        <img src="public/icon_deletar.png" alt="Dar baixa">
+                      </a>
+                    <?php endif; ?>
+                  </td>
+                </tr>
+              <?php endwhile; ?>
+            <?php else: ?>
+              <tr>
+                <td colspan="8" style="text-align:left;">Nenhum bem cadastrado.</td>
               </tr>
-            <?php endwhile; ?>
+            <?php endif; ?>
           </tbody>
         </table>
       </div>
     </section>
+
 
     <!-- RELATÓRIOS -->
     <!-- RELATÓRIOS -->
@@ -801,7 +669,7 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
               </tr>
             </thead>
             <tbody>
-              <?php $res_bens = $conn->query($sql_bens);
+              <?php $res_bens = $conexao->query($sql_bens);
               if ($res_bens && $res_bens->num_rows > 0):
                 while ($b = $res_bens->fetch_assoc()):
                   $perc = ($b['valor_inicial'] > 0) ? (($b['valor_depreciado'] / $b['valor_inicial']) * 100) : 0; ?>
@@ -928,7 +796,7 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
                 <th>Data de Aquisição</th>
                 <th>Data de Baixa</th>
                 <th>Valor de Aquisição</th>
-                <th>Valor Contábil</th>
+                <th>Motivo</th>
 
               </tr>
             </thead>
@@ -941,8 +809,7 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
                     <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
                     <td><?= date('d/m/Y', strtotime($b['data_baixa'])) ?></td>
                     <td>R$ <?= number_format($b['valor_inicial'], 2, ',', '.') ?></td>
-                    <td>R$ <?= number_format($b['valor_atual'], 2, ',', '.') ?></td>
-
+                    <td><?= htmlspecialchars($b['motivo'] ?? '—') ?></td>
                   </tr>
                 <?php endforeach; ?>
               <?php else: ?>
@@ -983,7 +850,7 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
                     <td><?= date('d/m/Y', strtotime($b['data_aquisicao'])) ?></td>
                     <td>R$ <?= number_format($b['valor_atual'], 2, ',', '.') ?></td>
                     <td><?= number_format($b['meses_restantes'], 1, ',', '.') ?></td>
-                    <td><?= htmlspecialchars($b['status']) ?></td>
+                    <td><span class="status"><?= htmlspecialchars($b['status']) ?></span></td>
                   </tr>
                 <?php endforeach; ?>
               <?php else: ?>
@@ -1003,14 +870,14 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
   <div id="modal-novo-bem" class="modal">
     <div class="modal-content">
       <h3>Novo Bem Patrimonial</h3>
-      <form id="form-novo-bem" method="POST" action="?">
+      <form id="form-novo-bem" method="POST"  action="?" name="acao">
         <label>Descrição:</label>
         <input type="text" name="descricao" required>
 
         <label>Categoria:</label>
         <select name="id_categoria" required>
           <option value="">Selecione</option>
-          <?php $res_cat = $conn->query("SELECT DISTINCT id_categoria, nome FROM categorias ORDER BY nome ASC");
+          <?php $res_cat = $conexao->query("SELECT DISTINCT id_categoria, nome FROM categorias ORDER BY nome ASC");
           while ($c = $res_cat->fetch_assoc()): ?>
             <option value="<?= $c['id_categoria'] ?>"><?= htmlspecialchars($c['nome']) ?></option>
           <?php endwhile; ?>
@@ -1037,7 +904,7 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
   <div id="modal-editar-bem" class="modal">
     <div class="modal-content">
       <h3>Editar Bem Patrimonial</h3>
-      <form id="form-editar-bem" method="POST">
+      <form id="form-editar-bem" method="POST"  name="acao">
         <input type="hidden" name="id_bem">
 
         <label>Descrição:</label>
@@ -1046,7 +913,7 @@ $bens_finais = $res_qtd_bens_finais->fetch_assoc();
         <label>Categoria:</label>
         <select name="id_categoria" required>
           <?php
-          $res_cat = $conn->query("SELECT id_categoria, nome FROM categorias");
+          $res_cat = $conexao->query("SELECT id_categoria, nome FROM categorias");
           while ($c = $res_cat->fetch_assoc()): ?>
             <option value="<?= $c['id_categoria'] ?>"><?= htmlspecialchars($c['nome']) ?></option>
           <?php endwhile; ?>
